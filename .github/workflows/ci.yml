@@ -1,4 +1,4 @@
-name: Dynamic Sidebar CI
+name: Dynamic Chat CI
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
         run: npm run check
 
       - name: Reject stale generated artifacts
-        run: git diff --exit-code -- hermes-dynamic-sidebar/plugin.js CHECKSUMS.sha256
+        run: git diff --exit-code -- hermes-dynamic-chat/plugin.js CHECKSUMS.sha256
 
       - name: Verify checksum
         run: sha256sum -c CHECKSUMS.sha256

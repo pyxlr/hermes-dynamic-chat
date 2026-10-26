@@ -1,4 +1,4 @@
-name: Create Dynamic Sidebar release
+name: Create Dynamic Chat release
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: dynamic-sidebar-release
+  group: dynamic-chat-release
   cancel-in-progress: false
 
 jobs:
@@ -54,7 +54,7 @@ jobs:
       - name: Build and verify generated files
         run: |
           npm run check
-          git diff --exit-code -- hermes-dynamic-sidebar/plugin.js CHECKSUMS.sha256
+          git diff --exit-code -- hermes-dynamic-chat/plugin.js CHECKSUMS.sha256
           sha256sum -c CHECKSUMS.sha256
 
       - name: Verify Chrome and run regression tests
@@ -82,7 +82,7 @@ jobs:
       - name: Upload verified files for the release job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dynamic-sidebar-release
+          name: dynamic-chat-release
           path: release-assets/
           if-no-files-found: error
           retention-days: 7
@@ -109,7 +109,7 @@ jobs:
       - name: Download the verified release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: dynamic-sidebar-release
+          name: dynamic-chat-release
           path: release-assets
           digest-mismatch: error
 
@@ -123,7 +123,7 @@ jobs:
           def read(path):
               request = urllib.request.Request('https://api.github.com/repos/' + repository + path,
                   headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-                           'Accept': 'application/vnd.github+json', 'User-Agent': 'dynamic-sidebar-release'})
+                           'Accept': 'application/vnd.github+json', 'User-Agent': 'dynamic-chat-release'})
               try:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       return json.load(response)
@@ -149,7 +149,7 @@ jobs:
 
       - name: Create a draft release with verified assets
         run: |
-          flags=(--draft --latest=false --target "$RELEASE_SHA" --title "Dynamic Sidebar $RELEASE_TAG" --generate-notes)
+          flags=(--draft --latest=false --target "$RELEASE_SHA" --title "Dynamic Chat $RELEASE_TAG" --generate-notes)
           if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
