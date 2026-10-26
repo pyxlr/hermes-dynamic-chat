@@ -1,0 +1,178 @@
+name: Create Dynamic Sidebar release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v, matching package.json and plugin.yaml (for example 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dynamic-sidebar-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      CHROME_BIN: /usr/bin/google-chrome
+      RELEASE_VERSION: ${{ inputs.version }}
+    outputs:
+      sha: ${{ steps.package.outputs.sha }}
+      tag: ${{ steps.package.outputs.tag }}
+      archive: ${{ steps.package.outputs.archive }}
+      prerelease: ${{ steps.package.outputs.prerelease }}
+    steps:
+      - name: Check out the exact workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Validate release version and committed bundle
+        run: python3 scripts/package-release.py --version "$RELEASE_VERSION" --check-only
+
+      - name: Install pinned test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build and verify generated files
+        run: |
+          npm run check
+          git diff --exit-code -- hermes-dynamic-sidebar/plugin.js CHECKSUMS.sha256
+          sha256sum -c CHECKSUMS.sha256
+
+      - name: Verify Chrome and run regression tests
+        run: |
+          test -x "$CHROME_BIN"
+          "$CHROME_BIN" --version
+          npm test
+
+      - name: Package verified release files
+        id: package
+        run: |
+          python3 scripts/package-release.py --version "$RELEASE_VERSION" --output release-assets
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          metadata = json.loads(Path('release-assets/release.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key in ('tag', 'archive', 'prerelease'):
+                  value = metadata[key]
+                  output.write(f'{key}={str(value).lower() if isinstance(value, bool) else value}\n')
+              output.write('sha=' + subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() + '\n')
+          PY
+          (cd release-assets && sha256sum -c CHECKSUMS.sha256)
+
+      - name: Upload verified files for the release job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dynamic-sidebar-release
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+
+  release:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+      RELEASE_ARCHIVE: ${{ needs.prepare.outputs.archive }}
+      RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      # Do not execute repository code in the job with release-write permission.
+      - name: Download the verified release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dynamic-sidebar-release
+          path: release-assets
+          digest-mismatch: error
+
+      - name: Verify checksums and reject conflicting existing releases or tags
+        run: |
+          (cd release-assets && sha256sum -c CHECKSUMS.sha256)
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+          repository = os.environ['GH_REPO']
+          tag, sha = os.environ['RELEASE_TAG'], os.environ['RELEASE_SHA']
+          def read(path):
+              request = urllib.request.Request('https://api.github.com/repos/' + repository + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json', 'User-Agent': 'dynamic-sidebar-release'})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  if error.code == 404:
+                      return None
+                  raise
+          if read('/releases/tags/' + tag) is not None:
+              raise SystemExit('Release already exists. It will not be overwritten.')
+          existing = read('/git/ref/tags/' + tag)
+          if existing:
+              target = existing['object']
+              for _ in range(10):
+                  if target['type'] != 'tag':
+                      break
+                  annotated = read('/git/tags/' + target['sha'])
+                  if not annotated:
+                      raise SystemExit('Cannot resolve existing tag.')
+                  target = annotated['object']
+              if target['type'] != 'commit' or target['sha'] != sha:
+                  raise SystemExit('Existing tag does not point to the tested commit.')
+          PY
+
+      - name: Create a draft release with verified assets
+        run: |
+          flags=(--draft --latest=false --target "$RELEASE_SHA" --title "Dynamic Sidebar $RELEASE_TAG" --generate-notes)
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" \
+            release-assets/plugin.js \
+            release-assets/plugin.yaml \
+            release-assets/LICENSE \
+            release-assets/README.md \
+            release-assets/CHECKSUMS.sha256 \
+            "release-assets/$RELEASE_ARCHIVE" \
+            "${flags[@]}"
+
+      - name: Verify the draft and read back uploaded assets
+        run: |
+          gh release view "$RELEASE_TAG" --json tagName,isDraft,targetCommitish,url > release-result.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release = json.loads(Path('release-result.json').read_text())
+          if release['tagName'] != os.environ['RELEASE_TAG'] or not release['isDraft'] or release['targetCommitish'] != os.environ['RELEASE_SHA']:
+              raise SystemExit('Created release does not match the tested draft target.')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Draft release: ' + release['url'] + '\n\nReview the notes and publish it from GitHub Releases.\n')
+          PY
+          gh release download "$RELEASE_TAG" --dir release-readback
+          (cd release-readback && sha256sum -c CHECKSUMS.sha256)

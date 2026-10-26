@@ -1,0 +1,11 @@
+name: hermes-dynamic-chat
+version: "0.1.0"
+description: >-
+  Theme-independent composer and chat width presets for Hermes Desktop.
+  Includes compact, wider and full-width modes with persistent palette controls.
+author: subhead
+kind: standalone
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+requires_env: []

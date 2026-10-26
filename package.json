@@ -1,0 +1,14 @@
+{
+  "name": "hermes-dynamic-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Theme-independent composer and chat width presets for Hermes Desktop",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "npm run build && node --check hermes-dynamic-chat/plugin.js",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  }
+}
